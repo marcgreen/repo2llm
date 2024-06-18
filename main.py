@@ -230,12 +230,14 @@ def clone_repo():
 def combine_files():
     global repo_name
     global combined_code
-    include_file_types = request.form.getlist('file_types')
+    exclude_file_types = request.form.getlist('file_types')
     selected_files = request.form.getlist('selected_files')
 
     # Exclude selected file types
     exclude_patterns = " -o ".join(
-        [f"-name '*{file_type}'" for file_type in include_file_types])
+        [f"-name '*{file_type}'" for file_type in exclude_file_types])
+    print(exclude_file_types)
+    print(exclude_patterns)
 
     repo_path = os.path.join(subdirectory, repo_name)
     if os.path.exists(repo_path):
@@ -247,9 +249,7 @@ def combine_files():
         #     [f"-path '{os.path.relpath(file, repo_path)}'" for file in selected_files]
         # ) + f" \\) -exec sh -c 'echo \">>> FILE: $1 <<<\" && cat \"$1\"' sh {{}} \\; > ../../all_code.txt"
         find_command = (
-            f"find . " + ("-type f" + (' -o '.join(
-                [f'-path \'{pattern}\''
-                 for pattern in exclude_patterns]) + " -prune -o")
+            f"find . " + (f"\\( -type f {exclude_patterns} -prune \\) -o"
                           if exclude_patterns else "") + " -type f \\( " +
             " -o ".join([
                 f"-path './{os.path.relpath(file, repo_path)}'"
