@@ -1,189 +1,211 @@
-from flask import Flask, request, render_template_string, render_template, jsonify, current_app
-import os
-import logging
+from fasthtml.common import *
 from utils import get_file_types, get_directory_structure
+import os
 import subprocess
-
-app = Flask(__name__)
-app.config['SUBDIRECTORY'] = 'cloned_repos'
-app.config['REPO_NAME'] = ''
+import logging
+from typing import Optional
+from starlette.responses import RedirectResponse
+from starlette.requests import Request
+from starlette.datastructures import State
+from dataclasses import dataclass, asdict
+import json
 
 logging.basicConfig(level=logging.DEBUG,
                     format='%(asctime)s - %(levelname)s - %(message)s')
 
+SUBDIRECTORY = 'cloned_repos'
 
-@app.route('/')
-def home():
-    if app.config['REPO_NAME']:
-        return render_repo_content()
-    else:
-        content = '''
-            <form hx-post="/clone" hx-target="#content">
-                GitHub URL: <input type="text" name="url"><br>
-                <input type="submit" value="Clone Repository">
-            </form>
-        '''
-        return render_template_string('''
-            {% extends "base.html" %}
-            {% block content %}
-            {{ content | safe }}
-            {% endblock %}
-        ''', content=content)
+@dataclass
+class Repo:
+    name: str
+    path: str
 
+    def to_dict(self):
+        return asdict(self)
 
-@app.route('/update-totals', methods=['POST'])
-def update_totals():
-    file_types = request.form.getlist('file_types')
-    selected_files = request.form.getlist('selected_files')
-    logging.debug(
-        f"update_totals called with file_types: {file_types}, selected_files: {selected_files}"
+    def to_json(self):
+        return json.dumps(self.to_dict())
+
+    @classmethod
+    def from_json(cls, json_str):
+        data = json.loads(json_str)
+        return cls(**data)
+
+app, rt = fast_app(
+    hdrs=(
+        picolink,
+        Style(':root { --pico-font-size: 100%; }'),
+        SortableJS('.sortable'),
+        Script("""
+            document.addEventListener('click', function(e) {
+                if (e.target && e.target.className == 'toggle') {
+                    var content = e.target.parentElement.querySelector('ul');
+                    if (content.style.display === 'none') {
+                        content.style.display = 'block';
+                        e.target.textContent = '-';
+                    } else {
+                        content.style.display = 'none';
+                        e.target.textContent = '+';
+                    }
+                }
+            });
+        """)
     )
+)
 
+app.state.current_repo = None
+
+def get_current_repo(request: Request) -> Optional[Repo]:
+    return request.app.state.current_repo
+
+def render_directory_structure(structure, checked=True):
+    if structure['type'] == 'file':
+        return Li(
+            Checkbox(name="selected_files", value=structure['path'], checked=checked),
+            f" {structure['name']} ({structure['size']} bytes, {structure['tokens']} tokens)"
+        )
+    else:
+        children = [render_directory_structure(child, checked) for child in structure['children']]
+        return Li(
+            Button("+", cls="toggle"),
+            structure['name'],
+            Ul(*children, style="display: none;")
+        )
+    
+@rt("/")
+async def get(request: Request):
+    current_repo = get_current_repo(request)
+    if current_repo:
+        return render_repo_content(current_repo)
+    else:
+        return render_clone_form()
+
+@rt("/clone")
+async def post(request: Request, url: str):
+    repo_name = url.split('/')[-1].replace('.git', '')
+    repo_path = os.path.join(SUBDIRECTORY, repo_name)
+    if not os.path.exists(repo_path):
+        clone_cmd = f'git clone {url} {repo_path}'
+        subprocess.run(clone_cmd, shell=True)
+    request.app.state.current_repo = Repo(name=repo_name, path=repo_path)
+    return RedirectResponse('/', status_code=303)
+
+@rt("/update-totals")
+async def post(request: Request):
+    data = await request.json()
+    file_types = data.get('file_types', [])
+    selected_files = data.get('selected_files', [])
+    
+    current_repo = get_current_repo(request)
+    if not current_repo:
+        return {"error": "No repository selected"}, 400
+    
+    logging.debug(f"update_totals called with file_types: {file_types}, selected_files: {selected_files}")
+    
     total_files = 0
     total_bytes = 0
     total_tokens = 0
 
-    repo_path = os.path.join(current_app.config['SUBDIRECTORY'],
-                             current_app.config['REPO_NAME'])
-    logging.debug(f"Repo path: {repo_path}")
-
-    file_types_data, file_data = get_file_types(repo_path)
-    logging.debug(f"File types data: {file_types_data}")
-    logging.debug(f"File data: {file_data}")
+    _, file_data = get_file_types(current_repo.path)
 
     for file_path in selected_files:
-        if file_path in file_data and not any(
-                file_path.endswith(ext) for ext in file_types):
+        file_path = ''.join(file_path)  # Convert list to string
+        if file_path in file_data and not any(file_path.endswith(ext) for ext in file_types):
             info = file_data[file_path]
             total_files += info['count']
             total_bytes += info['size']
             total_tokens += info['tokens']
-            logging.debug(
-                f"Added file: {file_path}, new totals: {total_files} files, {total_bytes} bytes, {total_tokens} tokens"
-            )
 
     result = f"Total: {total_files} files, {total_bytes} bytes, {total_tokens} tokens"
     logging.debug(f"Final result: {result}")
     return result
 
-
-@app.route('/select-all', methods=['POST'])
-def select_all():
-    repo_path = os.path.join(current_app.config['SUBDIRECTORY'],
-                             current_app.config['REPO_NAME'])
-    logging.debug(f"select_all called for repo path: {repo_path}")
-    _, file_data = get_file_types(repo_path)
-    dir_structure = get_directory_structure(repo_path, file_data)
-    result = dir_structure.replace('type="checkbox"',
-                                   'type="checkbox" checked')
-    logging.debug(f"select_all result: {result}")
-    return jsonify({"html": result})
-
-
-@app.route('/unselect-all', methods=['POST'])
-def unselect_all():
-    repo_path = os.path.join(current_app.config['SUBDIRECTORY'],
-                             current_app.config['REPO_NAME'])
-    logging.debug(f"unselect_all called for repo path: {repo_path}")
-    _, file_data = get_file_types(repo_path)
-    dir_structure = get_directory_structure(repo_path, file_data)
-    result = dir_structure.replace(' checked', '')
-    logging.debug(f"unselect_all result: {result}")
-    return jsonify({"html": result})
-
-def render_repo_content():
-    file_types, file_data = get_file_types(
-        os.path.join(app.config['SUBDIRECTORY'], app.config['REPO_NAME']))
-    dir_structure = get_directory_structure(
-        os.path.join(app.config['SUBDIRECTORY'], app.config['REPO_NAME']),
-        file_data)
-    checkboxes = ''.join(
-        f'<input type="checkbox" name="file_types" value="{ext}" hx-post="/update-totals" hx-trigger="change" hx-target="#totals"> {ext} ({info["count"]} files, {info["size"]} bytes, {info["tokens"]} tokens)<br>'
-        for ext, info in file_types.items())
-    js_dir_toggle = '''
-    <script>
-        document.addEventListener('click', function(e) {
-            if (e.target && e.target.className == 'toggle') {
-                var content = e.target.parentElement.querySelector('ul');
-                if (content.style.display === 'none') {
-                    content.style.display = 'block';
-                    e.target.textContent = '-';
-                } else {
-                    content.style.display = 'none';
-                    e.target.textContent = '+';
-                }
-            }
-        });
-    </script>
-    '''
-    content='''
-        {js_dir_toggle}
-        <form hx-post="/combine" hx-target="#content">
-            <h3>File Type Exclusions</h3>
-            <div id="file-types" hx-trigger="change" hx-post="/update-totals" hx-target="#totals">
-                {file_type_checkboxes}
-            </div>
-            <p id="totals">Total: 0 files, 0 bytes, 0 tokens</p>
-            <input type="submit" value="Combine Files">
-            <h3>Directory Structure</h3>
-            <div>
-                <button hx-post="/select-all" hx-target="#directory-structure">Select All</button>
-                <button hx-post="/unselect-all" hx-target="#directory-structure">Unselect All</button>
-            </div>
-            <div id="directory-structure" hx-trigger="change" hx-post="/update-totals" hx-target="#totals">
-                {directory_checkboxes}
-            </div>
-            <input type="submit" value="Combine Files">
-        </form>
-        <form hx-post="/delete" hx-target="#content">
-            <input type="submit" value="Delete Repository">
-        </form>
-    '''.format(file_type_checkboxes=checkboxes,
-               directory_checkboxes=dir_structure,
-               js_dir_toggle=js_dir_toggle)
-    return render_template('base.html', content=content)
-
-@app.route('/clone', methods=['POST'])
-def clone_repo():
-    url = request.form['url']
-    repo_name = url.split('/')[-1].replace('.git', '')
-
-    repo_path = os.path.join(app.config['SUBDIRECTORY'], repo_name)
-    if not os.path.exists(repo_path):
-        clone_cmd = f'git clone {url} {repo_path}'
-        subprocess.run(clone_cmd, shell=True)
-    app.config['REPO_NAME'] = repo_name
-
-    return render_template_string(render_repo_content())
-
-
-@app.route('/combine', methods=['POST'])
-def combine_files():
-    global combined_code
-    exclude_file_types = request.form.getlist('file_types')
-    selected_files = request.form.getlist('selected_files')
-
-    repo_path = os.path.join(app.config['SUBDIRECTORY'],
-                             app.config['REPO_NAME'])
+@rt("/combine")
+async def post(request: Request):
+    data = await request.json()
+    file_types = data.get('file_types', [])
+    selected_files = data.get('selected_files', [])
+    
+    current_repo = get_current_repo(request)
+    if not current_repo:
+        return {"error": "No repository selected"}, 400
     combined_code = ""
 
     for file_path in selected_files:
-        if not any(file_path.endswith(ext) for ext in exclude_file_types):
-            with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
+        full_path = os.path.join(current_repo.path, file_path)
+        if os.path.exists(full_path) and not any(file_path.endswith(ext) for ext in file_types):
+            with open(full_path, 'r', encoding='utf-8', errors='ignore') as f:
                 combined_code += f">>> FILE: {file_path} <<<\n{f.read()}\n\n"
 
-    return f'<pre>{combined_code}</pre>'
+    return Pre(combined_code)
 
+@rt("/select-all")
+async def post(request: Request):
+    current_repo = get_current_repo(request)
+    if not current_repo:
+        return {"error": "No repository selected"}, 400
+    _, file_data = get_file_types(current_repo.path)
+    structure = get_directory_structure(current_repo.path, file_data)
+    return render_directory_structure(structure)
 
-@app.route('/delete', methods=['POST'])
-def delete_repo():
-    repo_path = os.path.join(app.config['SUBDIRECTORY'],
-                             app.config['REPO_NAME'])
-    if os.path.exists(repo_path):
-        subprocess.run(f'rm -rf {repo_path}', shell=True)
-        app.config['REPO_NAME'] = ''
-    return home()
+@rt("/unselect-all")
+async def post(request: Request):
+    current_repo = get_current_repo(request)
+    if not current_repo:
+        return {"error": "No repository selected"}, 400
+    _, file_data = get_file_types(current_repo.path)
+    structure = get_directory_structure(current_repo.path, file_data)
+    return render_directory_structure(structure, checked=False)
 
+@rt("/delete")
+async def post(request: Request):
+    current_repo = get_current_repo(request)
+    if not current_repo:
+        return {"error": "No repository selected"}, 400
+    if os.path.exists(current_repo.path):
+        subprocess.run(f'rm -rf {current_repo.path}', shell=True)
+    request.app.state.current_repo = None
+    return RedirectResponse('/', status_code=303)
 
-if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=8081)
+def render_clone_form():
+    return Titled("Clone Repository",
+        Form(
+            Label("GitHub URL:", For="url"),
+            Input(id='url', name='url', placeholder='https://github.com/user/repo.git'),
+            Button('Clone Repository'),
+            action='/clone', method='post'
+        )
+    )
+
+def render_repo_content(repo: Repo):
+    file_types, file_data = get_file_types(repo.path)
+    structure = get_directory_structure(repo.path, file_data)
+    dir_structure = render_directory_structure(structure)
+    
+    checkboxes = [
+        Checkbox(name="file_types", value=ext, label=f"{ext} ({info['count']} files, {info['size']} bytes, {info['tokens']} tokens)")
+        for ext, info in file_types.items()
+    ]
+    
+    return Titled(f"Repository: {repo.name}",
+        Form(
+            H3("File Type Exclusions"),
+            Div(*checkboxes, id="file-types", hx_post="/update-totals", hx_trigger="change", hx_target="#totals"),
+            P("Total: 0 files, 0 bytes, 0 tokens", id="totals"),
+            H3("Directory Structure"),
+            Div(
+                Button("Select All", hx_post="/select-all", hx_target="#directory-structure"),
+                Button("Unselect All", hx_post="/unselect-all", hx_target="#directory-structure")
+            ),
+            Div(dir_structure, id="directory-structure", hx_trigger="change", hx_post="/update-totals", hx_target="#totals"),
+            Button("Combine Files"),
+            action="/combine", method="post"
+        ),
+        Form(
+            Button("Delete Repository"),
+            action="/delete", method="post"
+        )
+    )
+
+if __name__ == "__main__":
+    serve()

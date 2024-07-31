@@ -12,6 +12,12 @@ tiktoken = "^0.7.0"
 pytest = "^8.3.2"
 pytest-mock = "^3.14.0"
 beautifulsoup4 = "^4.12.3"
+python-fasthtml = "^0.2.1"
+fastcore = "^1.6.1"
+starlette = "^0.38.2"
+fastlite = "^0.0.7"
+sqlite-minutils = "^3.36.0.post4"
+pytest-asyncio = "^0.23.8"
 
 [tool.pyright]
 # https://github.com/microsoft/pyright/blob/main/docs/configuration.md
