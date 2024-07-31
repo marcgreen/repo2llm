@@ -97,14 +97,14 @@ async def post(request: Request, url: str):
 async def post(request: Request):
     logging.debug("update-totals route called")
     form_data = await request.form()
-    file_types = form_data.getlist('file_types')
+    excluded_file_types = form_data.getlist('file_types')
     selected_files = form_data.getlist('selected_files')
     
     current_repo = get_current_repo(request)
     if not current_repo:
         return {"error": "No repository selected"}, 400
     
-    logging.debug(f"update_totals called with file_types: {file_types}, selected_files: {selected_files}")
+    logging.debug(f"update_totals called with excluded_file_types: {excluded_file_types}, selected_files: {selected_files}")
     
     total_files = 0
     total_bytes = 0
@@ -113,7 +113,7 @@ async def post(request: Request):
     _, file_data = get_file_types(current_repo.path)
 
     for file_path in selected_files:
-        if file_path in file_data and not any(file_path.endswith(ext) for ext in file_types):
+        if file_path in file_data and not any(file_path.endswith(ext) for ext in excluded_file_types):
             info = file_data[file_path]
             total_files += info['count']
             total_bytes += info['size']
