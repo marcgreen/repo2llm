@@ -3,7 +3,6 @@ from starlette.testclient import TestClient
 from fasthtml.common import Li, Checkbox, Button, Ul
 from app import app, SUBDIRECTORY, Repo, get_current_repo
 import os
-import json
 
 @pytest.fixture
 def mock_repo_structure(mocker):
@@ -94,18 +93,17 @@ def test_home_route_with_repo(client, mock_current_repo):
     assert response.status_code == 200
     assert 'File Type Exclusions' in response.text
 
-import sys
 def test_update_totals_route(client, mock_current_repo):
-    response = client.post('/update-totals', json={'selected_files': ['file1.py', 'subdir/file3.js'], 'file_types': ['.txt']})
+    response = client.post('/update-totals', data={'selected_files': ['file1.py', 'subdir/file3.js'], 'file_types': ['.txt']})
     assert response.status_code == 200
     assert 'Total: 2 files, 250 bytes, 125 tokens' in response.text
 
 def test_combine_route(client, mock_current_repo, mocker):
     mocker.patch('builtins.open', mocker.mock_open(read_data="file content"))
     mocker.patch('os.path.exists', return_value=True)
-    response = client.post('/combine', json={'selected_files': ['file1.py'], 'file_types': []})
+    response = client.post('/combine', data={'selected_files': ['file1.py'], 'file_types': []})
     assert response.status_code == 200
-    assert ' FILE: file1.py ' in response.text
+    assert '&gt;&gt;&gt; FILE: file1.py &lt;&lt;&lt;' in response.text
     assert 'file content' in response.text
 
 def test_unselect_all_route(client, mock_current_repo):
@@ -129,7 +127,7 @@ def test_delete_route(client, mock_current_repo, mocker):
     assert app.state.current_repo is None
 
 def test_update_totals_with_file_selection(client, mock_current_repo):
-    response = client.post('/update-totals', json={'selected_files': ['file1.py'], 'file_types': []})
+    response = client.post('/update-totals', data={'selected_files': ['file1.py'], 'file_types': []})
     assert response.status_code == 200
     assert 'Total: 1 files, 100 bytes, 50 tokens' in response.text
 

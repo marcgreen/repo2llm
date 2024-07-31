@@ -6,7 +6,7 @@ import logging
 from typing import Optional
 from starlette.responses import RedirectResponse
 from starlette.requests import Request
-from starlette.datastructures import State
+from starlette.datastructures import State, FormData
 from dataclasses import dataclass, asdict
 import json
 
@@ -92,9 +92,9 @@ async def post(request: Request, url: str):
 
 @rt("/update-totals")
 async def post(request: Request):
-    data = await request.json()
-    file_types = data.get('file_types', [])
-    selected_files = data.get('selected_files', [])
+    form_data = await request.form()
+    file_types = form_data.getlist('file_types')
+    selected_files = form_data.getlist('selected_files')
     
     current_repo = get_current_repo(request)
     if not current_repo:
@@ -109,7 +109,6 @@ async def post(request: Request):
     _, file_data = get_file_types(current_repo.path)
 
     for file_path in selected_files:
-        file_path = ''.join(file_path)  # Convert list to string
         if file_path in file_data and not any(file_path.endswith(ext) for ext in file_types):
             info = file_data[file_path]
             total_files += info['count']
@@ -122,9 +121,9 @@ async def post(request: Request):
 
 @rt("/combine")
 async def post(request: Request):
-    data = await request.json()
-    file_types = data.get('file_types', [])
-    selected_files = data.get('selected_files', [])
+    form_data = await request.form()
+    file_types = form_data.getlist('file_types')
+    selected_files = form_data.getlist('selected_files')
     
     current_repo = get_current_repo(request)
     if not current_repo:
