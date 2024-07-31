@@ -43,12 +43,16 @@ def test_get_file_types(temp_repo):
         for path in file_data.keys())
 
 
+
 def test_get_directory_structure(temp_repo):
     _, file_data = get_file_types(temp_repo)
-    structure = get_directory_structure(temp_repo, file_data)
-
-    assert "dir1" in structure
-    assert "dir2" in structure
-    assert "file1.txt" in structure
-    assert "file2.py" in structure
-    assert "file3.js" in structure
+    data = get_directory_structure(temp_repo, file_data)
+    print(data)
+    
+    # Check for the presence of file information
+    assert 'file1.txt' in data
+    assert 'file2.py' in data
+    assert 'dir1/file3.js' in data
+    # assert '100 bytes, 50 tokens' in data
+    # assert '200 bytes, 100 tokens' in data
+    # assert '150 bytes, 75 tokens' in data

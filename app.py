@@ -1,4 +1,4 @@
-from flask import Flask, request, render_template_string, jsonify, current_app
+from flask import Flask, request, render_template_string, render_template, jsonify, current_app
 import os
 import logging
 from utils import get_file_types, get_directory_structure
@@ -17,12 +17,18 @@ def home():
     if app.config['REPO_NAME']:
         return render_repo_content()
     else:
-        return render_template_string('''
+        content = '''
             <form hx-post="/clone" hx-target="#content">
                 GitHub URL: <input type="text" name="url"><br>
                 <input type="submit" value="Clone Repository">
             </form>
-        ''')
+        '''
+        return render_template_string('''
+            {% extends "base.html" %}
+            {% block content %}
+            {{ content | safe }}
+            {% endblock %}
+        ''', content=content)
 
 
 @app.route('/update-totals', methods=['POST'])
@@ -81,11 +87,9 @@ def unselect_all():
     logging.debug(f"unselect_all called for repo path: {repo_path}")
     _, file_data = get_file_types(repo_path)
     dir_structure = get_directory_structure(repo_path, file_data)
-    result = dir_structure.replace(' checked',
-                                   '')  # Remove all 'checked' attributes
+    result = dir_structure.replace(' checked', '')
     logging.debug(f"unselect_all result: {result}")
     return jsonify({"html": result})
-
 
 def render_repo_content():
     file_types, file_data = get_file_types(
@@ -96,17 +100,27 @@ def render_repo_content():
     checkboxes = ''.join(
         f'<input type="checkbox" name="file_types" value="{ext}" hx-post="/update-totals" hx-trigger="change" hx-target="#totals"> {ext} ({info["count"]} files, {info["size"]} bytes, {info["tokens"]} tokens)<br>'
         for ext, info in file_types.items())
-
-    print('test')
-    logging.info(f"Rendering repo content with file types: {file_types}")
-    logging.info(f"Rendering repo content with file data: {file_data}")
-    logging.info(
-        f"Rendering repo content with directory structure: {dir_structure}")
-    logging.info(f"Rendering repo content with checkboxes: {checkboxes}")
-    return render_template_string('''
+    js_dir_toggle = '''
+    <script>
+        document.addEventListener('click', function(e) {
+            if (e.target && e.target.className == 'toggle') {
+                var content = e.target.parentElement.querySelector('ul');
+                if (content.style.display === 'none') {
+                    content.style.display = 'block';
+                    e.target.textContent = '-';
+                } else {
+                    content.style.display = 'none';
+                    e.target.textContent = '+';
+                }
+            }
+        });
+    </script>
+    '''
+    content='''
+        {js_dir_toggle}
         <form hx-post="/combine" hx-target="#content">
             <h3>File Type Exclusions</h3>
-            <div id="file-types" hx-trigger="change from:input" hx-post="/update-totals" hx-target="#totals">
+            <div id="file-types" hx-trigger="change" hx-post="/update-totals" hx-target="#totals">
                 {file_type_checkboxes}
             </div>
             <p id="totals">Total: 0 files, 0 bytes, 0 tokens</p>
@@ -116,7 +130,7 @@ def render_repo_content():
                 <button hx-post="/select-all" hx-target="#directory-structure">Select All</button>
                 <button hx-post="/unselect-all" hx-target="#directory-structure">Unselect All</button>
             </div>
-            <div id="directory-structure" hx-trigger="change from:input" hx-post="/update-totals" hx-target="#totals">
+            <div id="directory-structure" hx-trigger="change" hx-post="/update-totals" hx-target="#totals">
                 {directory_checkboxes}
             </div>
             <input type="submit" value="Combine Files">
@@ -125,8 +139,9 @@ def render_repo_content():
             <input type="submit" value="Delete Repository">
         </form>
     '''.format(file_type_checkboxes=checkboxes,
-               directory_checkboxes=dir_structure))
-
+               directory_checkboxes=dir_structure,
+               js_dir_toggle=js_dir_toggle)
+    return render_template('base.html', content=content)
 
 @app.route('/clone', methods=['POST'])
 def clone_repo():
@@ -139,7 +154,7 @@ def clone_repo():
         subprocess.run(clone_cmd, shell=True)
     app.config['REPO_NAME'] = repo_name
 
-    return render_repo_content()
+    return render_template_string(render_repo_content())
 
 
 @app.route('/combine', methods=['POST'])
@@ -171,4 +186,4 @@ def delete_repo():
 
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=81)
+    app.run(host='0.0.0.0', port=8081)
