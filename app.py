@@ -38,7 +38,8 @@ app, rt = fast_app(
         SortableJS('.sortable'),
         Script("""
             document.addEventListener('click', function(e) {
-                if (e.target && e.target.className == 'toggle') {
+                if (e.target && e.target.classList.contains('toggle')) {
+                    e.preventDefault();
                     var content = e.target.parentElement.querySelector('ul');
                     if (content.style.display === 'none') {
                         content.style.display = 'block';
@@ -56,7 +57,9 @@ app, rt = fast_app(
 app.state.current_repo = None
 
 def get_current_repo(request: Request) -> Optional[Repo]:
-    return request.app.state.current_repo
+    repo = request.app.state.current_repo
+    logging.debug(f"Current repo: {repo}")
+    return repo
 
 def render_directory_structure(structure, checked=True):
     if structure['type'] == 'file':
@@ -67,7 +70,7 @@ def render_directory_structure(structure, checked=True):
     else:
         children = [render_directory_structure(child, checked) for child in structure['children']]
         return Li(
-            Button("+", cls="toggle"),
+            Button("+", cls="toggle", type="button"),
             structure['name'],
             Ul(*children, style="display: none;")
         )
@@ -92,6 +95,7 @@ async def post(request: Request, url: str):
 
 @rt("/update-totals")
 async def post(request: Request):
+    logging.debug("update-totals route called")
     form_data = await request.form()
     file_types = form_data.getlist('file_types')
     selected_files = form_data.getlist('selected_files')
@@ -197,7 +201,7 @@ def render_repo_content(repo: Repo):
                 Button("Unselect All", hx_post="/unselect-all", hx_target="#directory-structure")
             ),
             Div(dir_structure, id="directory-structure", hx_trigger="change", hx_post="/update-totals", hx_target="#totals"),
-            Button("Combine Files"),
+            Button("Combine Files", type="submit"),
             action="/combine", method="post"
         ),
         Form(
