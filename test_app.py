@@ -9,16 +9,21 @@ def mock_repo_structure(mocker):
     mock_file_types = {
         '.py': {'count': 1, 'size': 100, 'tokens': 50},
         '.txt': {'count': 1, 'size': 200, 'tokens': 100},
-        '.js': {'count': 1, 'size': 150, 'tokens': 75}
+        '.js': {'count': 1, 'size': 150, 'tokens': 75},
+        '.gitignore': {'count': 1, 'size': 20, 'tokens': 10},
+        '(no extension)': {'count': 1, 'size': 50, 'tokens': 25}
     }
     mock_file_data = {
         'file1.py': {'count': 1, 'size': 100, 'tokens': 50},
         'file2.txt': {'count': 1, 'size': 200, 'tokens': 100},
-        'subdir/file3.js': {'count': 1, 'size': 150, 'tokens': 75}
+        'subdir/file3.js': {'count': 1, 'size': 150, 'tokens': 75},
+        '.gitignore': {'count': 1, 'size': 20, 'tokens': 10},
+        'LICENSE': {'count': 1, 'size': 50, 'tokens': 25}
     }
+    mock_skipped_files = ['binary_file']
 
     def mock_get_file_types(repo_path):
-        return mock_file_types, mock_file_data
+        return mock_file_types, mock_file_data, mock_skipped_files
 
     mocker.patch('app.get_file_types', side_effect=mock_get_file_types)
     mocker.patch('app.get_directory_structure', return_value={
@@ -53,6 +58,26 @@ def mock_repo_structure(mocker):
                         'tokens': 75
                     }
                 ]
+            },
+            {
+                'type': 'file',
+                'name': '.gitignore',
+                'path': '/path/to/test_repo/.gitignore',
+                'size': 20,
+                'tokens': 10
+            },
+            {
+                'type': 'file',
+                'name': 'LICENSE',
+                'path': '/path/to/test_repo/LICENSE',
+                'size': 50,
+                'tokens': 25
+            },
+            {
+                'type': 'file',
+                'name': 'binary_file',
+                'path': '/path/to/test_repo/binary_file',
+                'skipped': True
             }
         ]
     })
@@ -74,14 +99,6 @@ def client(mock_repo_structure, mock_current_repo):
         app.state.current_repo = mock_current_repo
         yield client
 
-def test_select_all_route(client, mock_current_repo):
-    response = client.post('/select-all')
-    assert response.status_code == 200
-    assert 'checked' in response.text
-    assert 'file1.py' in response.text
-    assert 'file2.txt' in response.text
-    assert 'file3.js' in response.text
-
 def test_home_route_no_repo(client, mocker):
     mocker.patch('app.get_current_repo', return_value=None)
     response = client.get('/')
@@ -92,6 +109,14 @@ def test_home_route_with_repo(client, mock_current_repo):
     response = client.get('/')
     assert response.status_code == 200
     assert 'File Type Exclusions' in response.text
+
+def test_clone_route(client, mocker):
+    mocker.patch('subprocess.run')
+    mocker.patch('os.path.exists', return_value=False)
+    response = client.post('/clone', data={'url': 'https://github.com/user/repo.git'})
+    assert response.status_code == 200
+    assert app.state.current_repo is not None
+    assert app.state.current_repo.name == 'repo'
 
 def test_update_totals_route(client, mock_current_repo):
     response = client.post('/update-totals', data={'selected_files': ['file1.py', 'subdir/file3.js'], 'file_types': ['.txt']})
@@ -106,18 +131,18 @@ def test_combine_route(client, mock_current_repo, mocker):
     assert '&gt;&gt;&gt; FILE: file1.py &lt;&lt;&lt;' in response.text
     assert 'file content' in response.text
 
+def test_select_all_route(client, mock_current_repo):
+    response = client.post('/select-all')
+    assert response.status_code == 200
+    assert 'checked' in response.text
+    assert 'file1.py' in response.text
+    assert 'file2.txt' in response.text
+    assert 'file3.js' in response.text
+
 def test_unselect_all_route(client, mock_current_repo):
     response = client.post('/unselect-all')
     assert response.status_code == 200
     assert 'checked' not in response.text
-
-def test_clone_route(client, mocker):
-    mocker.patch('subprocess.run')
-    mocker.patch('os.path.exists', return_value=False)
-    response = client.post('/clone', data={'url': 'https://github.com/user/repo.git'})
-    assert response.status_code == 200
-    assert app.state.current_repo is not None
-    assert app.state.current_repo.name == 'repo'
 
 def test_delete_route(client, mock_current_repo, mocker):
     mocker.patch('os.path.exists', return_value=True)
@@ -126,10 +151,31 @@ def test_delete_route(client, mock_current_repo, mocker):
     assert response.status_code == 200
     assert app.state.current_repo is None
 
-def test_update_totals_with_file_selection(client, mock_current_repo):
-    response = client.post('/update-totals', data={'selected_files': ['file1.py'], 'file_types': []})
+def test_dotfile_in_directory_structure(client, mock_current_repo):
+    response = client.get('/')
     assert response.status_code == 200
-    assert 'Total: 1 files, 100 bytes, 50 tokens' in response.text
+    assert '.gitignore' in response.text
+
+def test_no_extension_file_in_directory_structure(client, mock_current_repo):
+    response = client.get('/')
+    assert response.status_code == 200
+    assert 'LICENSE' in response.text
+
+def test_skipped_file_in_directory_structure(client, mock_current_repo):
+    response = client.get('/')
+    assert response.status_code == 200
+    assert 'binary_file' in response.text
+    assert 'Binary or unreadable file - skipped' in response.text
+
+def test_update_totals_with_dotfile(client, mock_current_repo):
+    response = client.post('/update-totals', data={'selected_files': ['.gitignore'], 'file_types': []})
+    assert response.status_code == 200
+    assert 'Total: 1 files, 20 bytes, 10 tokens' in response.text
+
+def test_update_totals_with_no_extension_file(client, mock_current_repo):
+    response = client.post('/update-totals', data={'selected_files': ['LICENSE'], 'file_types': []})
+    assert response.status_code == 200
+    assert 'Total: 1 files, 50 bytes, 25 tokens' in response.text
 
 def test_directory_structure_collapsible(client, mock_current_repo):
     response = client.get('/')

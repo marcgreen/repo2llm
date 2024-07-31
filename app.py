@@ -63,6 +63,11 @@ def get_current_repo(request: Request) -> Optional[Repo]:
 
 def render_directory_structure(structure, checked=True):
     if structure['type'] == 'file':
+        if structure.get('skipped', False):
+            return Li(
+                f"{structure['name']} (Binary or unreadable file - skipped)",
+                style="color: gray; font-style: italic;"
+            )
         return Li(
             Checkbox(name="selected_files", value=structure['path'], checked=checked),
             f" {structure['name']} ({structure['size']} bytes, {structure['tokens']} tokens)"
@@ -110,14 +115,19 @@ async def post(request: Request):
     total_bytes = 0
     total_tokens = 0
 
-    _, file_data = get_file_types(current_repo.path)
+    _, file_data, _ = get_file_types(current_repo.path)
+
+    exclude_no_extension = "(no extension)" in excluded_file_types
+    excluded_file_types = [ext for ext in excluded_file_types if ext != "(no extension)"]
 
     for file_path in selected_files:
-        if file_path in file_data and not any(file_path.endswith(ext) for ext in excluded_file_types):
-            info = file_data[file_path]
-            total_files += info['count']
-            total_bytes += info['size']
-            total_tokens += info['tokens']
+        if file_path in file_data:
+            _, ext = os.path.splitext(file_path)
+            if (ext or not exclude_no_extension) and not any(file_path.endswith(excluded_ext) for excluded_ext in excluded_file_types):
+                info = file_data[file_path]
+                total_files += info['count']
+                total_bytes += info['size']
+                total_tokens += info['tokens']
 
     result = f"Total: {total_files} files, {total_bytes} bytes, {total_tokens} tokens"
     logging.debug(f"Final result: {result}")
@@ -147,8 +157,8 @@ async def post(request: Request):
     current_repo = get_current_repo(request)
     if not current_repo:
         return {"error": "No repository selected"}, 400
-    _, file_data = get_file_types(current_repo.path)
-    structure = get_directory_structure(current_repo.path, file_data)
+    _, file_data, skipped_files = get_file_types(current_repo.path)
+    structure = get_directory_structure(current_repo.path, file_data, skipped_files)
     return render_directory_structure(structure)
 
 @rt("/unselect-all")
@@ -156,8 +166,8 @@ async def post(request: Request):
     current_repo = get_current_repo(request)
     if not current_repo:
         return {"error": "No repository selected"}, 400
-    _, file_data = get_file_types(current_repo.path)
-    structure = get_directory_structure(current_repo.path, file_data)
+    _, file_data, skipped_files = get_file_types(current_repo.path)
+    structure = get_directory_structure(current_repo.path, file_data, skipped_files)
     return render_directory_structure(structure, checked=False)
 
 @rt("/delete")
@@ -181,13 +191,16 @@ def render_clone_form():
     )
 
 def render_repo_content(repo: Repo):
-    file_types, file_data = get_file_types(repo.path)
-    structure = get_directory_structure(repo.path, file_data)
+    file_types, file_data, skipped_files = get_file_types(repo.path)
+    structure = get_directory_structure(repo.path, file_data, skipped_files)
     dir_structure = render_directory_structure(structure)
+    
+    # Sort file types, putting "(no extension)" at the end if it exists
+    sorted_file_types = sorted(file_types.items(), key=lambda x: (x[0] != "(no extension)", x[0]))
     
     checkboxes = [
         Checkbox(name="file_types", value=ext, label=f"{ext} ({info['count']} files, {info['size']} bytes, {info['tokens']} tokens)")
-        for ext, info in file_types.items()
+        for ext, info in sorted_file_types
     ]
     
     return Titled(f"Repository: {repo.name}",
