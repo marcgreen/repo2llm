@@ -98,6 +98,27 @@ async def post(request: Request, url: str):
     request.app.state.current_repo = Repo(name=repo_name, path=repo_path)
     return RedirectResponse('/', status_code=303)
 
+def calculate_totals(repo_path, selected_files, excluded_file_types):
+    total_files = 0
+    total_bytes = 0
+    total_tokens = 0
+
+    _, file_data, _ = get_file_types(repo_path)
+
+    exclude_no_extension = "(no extension)" in excluded_file_types
+    excluded_file_types = [ext for ext in excluded_file_types if ext != "(no extension)"]
+
+    for file_path in selected_files:
+        if file_path in file_data:
+            _, ext = os.path.splitext(file_path)
+            if (ext or not exclude_no_extension) and not any(file_path.endswith(excluded_ext) for excluded_ext in excluded_file_types):
+                info = file_data[file_path]
+                total_files += info['count']
+                total_bytes += info['size']
+                total_tokens += info['tokens']
+
+    return total_files, total_bytes, total_tokens
+
 @rt("/update-totals")
 async def post(request: Request):
     logging.debug("update-totals route called")
@@ -111,23 +132,7 @@ async def post(request: Request):
     
     logging.debug(f"update_totals called with excluded_file_types: {excluded_file_types}, selected_files: {selected_files}")
     
-    total_files = 0
-    total_bytes = 0
-    total_tokens = 0
-
-    _, file_data, _ = get_file_types(current_repo.path)
-
-    exclude_no_extension = "(no extension)" in excluded_file_types
-    excluded_file_types = [ext for ext in excluded_file_types if ext != "(no extension)"]
-
-    for file_path in selected_files:
-        if file_path in file_data:
-            _, ext = os.path.splitext(file_path)
-            if (ext or not exclude_no_extension) and not any(file_path.endswith(excluded_ext) for excluded_ext in excluded_file_types):
-                info = file_data[file_path]
-                total_files += info['count']
-                total_bytes += info['size']
-                total_tokens += info['tokens']
+    total_files, total_bytes, total_tokens = calculate_totals(current_repo.path, selected_files, excluded_file_types)
 
     result = f"Total: {total_files} files, {total_bytes} bytes, {total_tokens} tokens"
     logging.debug(f"Final result: {result}")
@@ -195,6 +200,10 @@ def render_repo_content(repo: Repo):
     structure = get_directory_structure(repo.path, file_data, skipped_files)
     dir_structure = render_directory_structure(structure)
     
+    # Calculate initial totals
+    all_files = list(file_data.keys())
+    total_files, total_bytes, total_tokens = calculate_totals(repo.path, all_files, [])
+    
     # Sort file types, putting "(no extension)" at the end if it exists
     sorted_file_types = sorted(file_types.items(), key=lambda x: (x[0] != "(no extension)", x[0]))
     
@@ -207,7 +216,7 @@ def render_repo_content(repo: Repo):
         Form(
             H3("File Type Exclusions"),
             Div(*checkboxes, id="file-types", hx_post="/update-totals", hx_trigger="change", hx_target="#totals"),
-            P("Total: 0 files, 0 bytes, 0 tokens", id="totals"),
+            P(f"Total: {total_files} files, {total_bytes} bytes, {total_tokens} tokens", id="totals"),
             H3("Directory Structure"),
             Div(
                 Button("Select All", hx_post="/select-all", hx_target="#directory-structure"),

@@ -109,7 +109,13 @@ def test_home_route_with_repo(client, mock_current_repo):
     response = client.get('/')
     assert response.status_code == 200
     assert 'File Type Exclusions' in response.text
+    assert 'Total: 5 files, 520 bytes, 260 tokens' in response.text
 
+def test_initial_totals_calculation(client, mock_current_repo):
+    response = client.get('/')
+    assert response.status_code == 200
+    assert 'Total: 5 files, 520 bytes, 260 tokens' in response.text
+    
 def test_clone_route(client, mocker):
     mocker.patch('subprocess.run')
     mocker.patch('os.path.exists', return_value=False)
