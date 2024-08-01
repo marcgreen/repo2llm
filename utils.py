@@ -5,6 +5,22 @@ def count_tokens(text):
     enc = tiktoken.encoding_for_model("gpt-4")
     return len(enc.encode(text, disallowed_special=()))
 
+def is_binary(file_path, chunk_size=8192):
+    """
+    Check if a file is binary by reading a chunk and looking for null bytes
+    and other non-text characters.
+    """
+    try:
+        with open(file_path, 'rb') as file:
+            chunk = file.read(chunk_size)
+            if b'\x00' in chunk:  # Check for null bytes
+                return True
+            # Check for a high percentage of non-text characters
+            text_characters = bytearray({7,8,9,10,12,13,27} | set(range(0x20, 0x100)) - {0x7f})
+            return float(len(chunk.translate(None, text_characters))) / len(chunk) > 0.30
+    except IOError:
+        return False
+    
 def get_file_types(repo_path):
     file_types = {}
     file_data = {}
@@ -15,6 +31,10 @@ def get_file_types(repo_path):
         for file in files:
             file_path = os.path.join(root, file)
             
+            if is_binary(file_path):
+                skipped_files.append(file_path)
+                continue
+
             if file.startswith('.'):
                 ext = file
             else:
@@ -24,15 +44,10 @@ def get_file_types(repo_path):
             
             try:
                 size = os.path.getsize(file_path)
-                with open(file_path, 'rb') as f:
+                with open(file_path, 'r', encoding='utf-8') as f:
                     content = f.read()
-                try:
-                    content = content.decode('utf-8')
-                    tokens = count_tokens(content)
-                except UnicodeDecodeError:
-                    skipped_files.append(file_path)
-                    continue
-            except IOError:
+                tokens = count_tokens(content)
+            except (UnicodeDecodeError, IOError):
                 skipped_files.append(file_path)
                 continue
 
