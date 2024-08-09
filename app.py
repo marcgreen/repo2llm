@@ -31,6 +31,12 @@ class Repo:
         data = json.loads(json_str)
         return cls(**data)
 
+    def __repr__(self):
+        return f"Repo(name={self.name}, path={self.path})"
+    
+    def __str__(self):
+        return self.path + '/' + self.name
+    
 app, rt = fast_app(
     hdrs=(
         picolink,
@@ -48,6 +54,16 @@ app, rt = fast_app(
                         content.style.display = 'none';
                         e.target.textContent = '+';
                     }
+                }
+            });
+
+            document.addEventListener('change', function(e) {
+                if (e.target && e.target.classList.contains('directory-checkbox')) {
+                    var li = e.target.closest('li');
+                    var childCheckboxes = li.querySelectorAll('input[type="checkbox"]');
+                    childCheckboxes.forEach(function(checkbox) {
+                        checkbox.checked = e.target.checked;
+                    });
                 }
             });
         """)
@@ -75,6 +91,7 @@ def render_directory_structure(structure, checked=True):
     else:
         children = [render_directory_structure(child, checked) for child in structure['children']]
         return Li(
+            Checkbox(name="selected_files", value=structure['path'], checked=checked, cls="directory-checkbox"),
             Button("+", cls="toggle", type="button"),
             structure['name'],
             Ul(*children, style="display: none;")
@@ -98,18 +115,28 @@ async def post(request: Request, url: str):
     request.app.state.current_repo = Repo(name=repo_name, path=repo_path)
     return RedirectResponse('/', status_code=303)
 
-def calculate_totals(repo_path, selected_files, excluded_file_types):
+def calculate_totals(file_data, selected_files, excluded_file_types):
     total_files = 0
     total_bytes = 0
     total_tokens = 0
-
-    _, file_data, _ = get_file_types(repo_path)
 
     exclude_no_extension = "(no extension)" in excluded_file_types
     excluded_file_types = [ext for ext in excluded_file_types if ext != "(no extension)"]
 
     for file_path in selected_files:
-        if file_path in file_data:
+        if os.path.isdir(file_path):
+            # If it's a directory, include all files under it
+            for root, _, files in os.walk(file_path):
+                for file in files:
+                    full_path = os.path.join(root, file)
+                    if full_path in file_data:
+                        _, ext = os.path.splitext(full_path)
+                        if (ext or not exclude_no_extension) and not any(full_path.endswith(excluded_ext) for excluded_ext in excluded_file_types):
+                            info = file_data[full_path]
+                            total_files += info['count']
+                            total_bytes += info['size']
+                            total_tokens += info['tokens']
+        elif file_path in file_data:
             _, ext = os.path.splitext(file_path)
             if (ext or not exclude_no_extension) and not any(file_path.endswith(excluded_ext) for excluded_ext in excluded_file_types):
                 info = file_data[file_path]
@@ -132,7 +159,11 @@ async def post(request: Request):
     
     logging.debug(f"update_totals called with excluded_file_types: {excluded_file_types}, selected_files: {selected_files}")
     
-    total_files, total_bytes, total_tokens = calculate_totals(current_repo.path, selected_files, excluded_file_types)
+    # Ensure all selected_files are relative to the repo path
+    selected_files = [os.path.relpath(path, current_repo.path) for path in selected_files]
+    
+    _, file_data, _ = get_file_types(current_repo.path)
+    total_files, total_bytes, total_tokens = calculate_totals(file_data, selected_files, excluded_file_types)
 
     result = f"Total: {total_files} files, {total_bytes} bytes, {total_tokens} tokens"
     logging.debug(f"Final result: {result}")
@@ -202,7 +233,7 @@ def render_repo_content(repo: Repo):
     
     # Calculate initial totals
     all_files = list(file_data.keys())
-    total_files, total_bytes, total_tokens = calculate_totals(repo.path, all_files, [])
+    total_files, total_bytes, total_tokens = calculate_totals(file_data, all_files, [])
     
     # Sort file types, putting "(no extension)" at the end if it exists
     sorted_file_types = sorted(file_types.items(), key=lambda x: (x[0] != "(no extension)", x[0]))
@@ -222,7 +253,13 @@ def render_repo_content(repo: Repo):
                 Button("Select All", hx_post="/select-all", hx_target="#directory-structure"),
                 Button("Unselect All", hx_post="/unselect-all", hx_target="#directory-structure")
             ),
-            Div(dir_structure, id="directory-structure", hx_trigger="change", hx_post="/update-totals", hx_target="#totals"),
+            Div(dir_structure, 
+                id="directory-structure", 
+                hx_trigger="change", 
+                hx_post="/update-totals", 
+                hx_target="#totals",
+                hx_include="[name='file_types'],[name='selected_files']"
+            ),
             Button("Combine Files", type="submit"),
             action="/combine", method="post"
         ),

@@ -18,6 +18,8 @@ starlette = "^0.38.2"
 fastlite = "^0.0.7"
 sqlite-minutils = "^3.36.0.post4"
 pytest-asyncio = "^0.23.8"
+playwright = "^1.45.1"
+pytest-playwright = "^0.5.1"
 
 [tool.pyright]
 # https://github.com/microsoft/pyright/blob/main/docs/configuration.md
